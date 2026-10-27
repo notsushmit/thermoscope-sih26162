@@ -1,0 +1,118 @@
+# Scheduled 2026 NRT update + static-site deploy (GitHub Pages).
+#
+# Every ~30 minutes: restore the inputs kept on the `data` branch, run the
+# unchanged src/update_2026_nrt.py cycle (fetch FIRMS NRT -> events ->
+# evidence -> locked-model inference), publish the dashboard + the two
+# output files to GitHub Pages, and persist the updated FIRMS 2026 store
+# back to the `data` branch.
+#
+# Requires: repo secret FIRMS_MAP_KEY; Pages source set to "GitHub Actions".
+# GitHub's cron is best-effort, so runs can start late or be skipped.
+name: NRT update and deploy
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nrt-update
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out code (main)
+        uses: actions/checkout@v4
+
+      - name: Check out inputs (data branch)
+        uses: actions/checkout@v4
+        with:
+          ref: data
+          path: _data
+
+      - name: Restore input data files
+        run: cp -r _data/data/. data/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Cache ESA WorldCover tiles
+        uses: actions/cache@v4
+        with:
+          path: data/external_cache/esa_worldcover
+          key: worldcover-v200-2021
+
+      - name: Run NRT update cycle
+        env:
+          FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+        run: |
+          # FIRMS occasionally times out; a failed fetch changes nothing, so retrying is safe.
+          for attempt in 1 2 3; do
+            python src/update_2026_nrt.py && break
+            echo "attempt $attempt failed"
+            [ "$attempt" = 3 ] && exit 1
+            sleep 30
+          done
+
+      - name: Verify the cycle really completed
+        # update_2026_nrt.py exits 0 for SKIPPED / BLOCKED too, so require a fresh sidecar.
+        run: |
+          python - <<'PY'
+          import json, sys
+          from datetime import datetime, timezone
+          f = json.load(open("data/processed/gujarat_2026_inference_freshness.json"))
+          age = (datetime.now(timezone.utc) - datetime.fromisoformat(f["last_updated_utc"])).total_seconds()
+          print("freshness:", f)
+          sys.exit(0 if age < 1200 else "freshness file is not from this run")
+          PY
+
+      - name: Persist updated FIRMS store to data branch
+        run: |
+          if cmp -s data/raw/firms_gujarat_2026.csv _data/data/raw/firms_gujarat_2026.csv; then
+            echo "FIRMS store unchanged; nothing to persist"
+            exit 0
+          fi
+          cp data/raw/firms_gujarat_2026.csv _data/data/raw/firms_gujarat_2026.csv
+          cd _data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan data-next
+          git add -A
+          git commit -q -m "Update FIRMS 2026 store ($(date -u +%Y-%m-%dT%H:%MZ))"
+          git push --force origin data-next:data
+
+      - name: Build site
+        run: |
+          mkdir -p _site/frontend _site/data/processed
+          cp -r frontend/index.html frontend/styles.css frontend/js _site/frontend/
+          cp data/processed/gujarat_2026_inference.csv \
+             data/processed/gujarat_2026_inference_freshness.json _site/data/processed/
+          echo '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=frontend/"><a href="frontend/">ThermoScope</a>' > _site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: update
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

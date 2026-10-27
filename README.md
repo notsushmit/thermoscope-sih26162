@@ -173,8 +173,10 @@ This distinction is surfaced directly in the frontend as a per-class
 "NRT" here means **scheduled polling**, not streaming — there is no
 push/websocket mechanism anywhere.
 
-- Every **30 minutes**, a macOS LaunchAgent (`ops/com.thermoscope.nrt_update.plist`,
-  `StartInterval=1800`) runs `python3 src/update_2026_nrt.py`.
+- Every **30 minutes**, a scheduler runs `python3 src/update_2026_nrt.py`.
+  Deployed: a GitHub Actions workflow (see [Deployment](#deployment-github-actions--pages)).
+  Local alternative: a macOS LaunchAgent (`ops/com.thermoscope.nrt_update.plist`,
+  `StartInterval=1800`).
 - That script fetches the **last 7 days** of `VIIRS_SNPP_NRT` detections,
   merges/dedupes them into the existing 2026 raw store, then **re-derives
   all 2026 events, evidence, and predictions from scratch** from that
@@ -257,7 +259,8 @@ then open `http://localhost:8000/frontend/`.
 python3 src/update_2026_nrt.py
 ```
 
-**Schedule it to run automatically every 30 minutes** (macOS):
+**Schedule it locally every 30 minutes** (macOS; the deployed site uses
+GitHub Actions instead):
 
 ```bash
 mkdir -p ~/Library/LaunchAgents
@@ -266,6 +269,28 @@ launchctl load ~/Library/LaunchAgents/com.thermoscope.nrt_update.plist
 ```
 
 To stop it: `launchctl unload ~/Library/LaunchAgents/com.thermoscope.nrt_update.plist`
+
+### Deployment (GitHub Actions + Pages)
+
+`.github/workflows/nrt-update.yml` runs every ~30 minutes (and on manual
+"Run workflow"): it restores the inputs kept on the `data` branch, runs
+the unchanged `src/update_2026_nrt.py`, publishes the dashboard plus the
+two output files to GitHub Pages, and writes the updated FIRMS 2026 store
+back to the `data` branch. The frontend is unchanged and keeps polling
+the freshness file every ~60 s.
+
+One-time setup: add the repo secret `FIRMS_MAP_KEY`, and set
+Settings → Pages → Source to **GitHub Actions**.
+
+- The `data` branch holds only input state (FIRMS 2026 store, cached OSM/WRI
+  evidence, historical cluster evidence, the locked model). It is replaced
+  by a single commit whenever the FIRMS store changes, so its history stays small.
+- GitHub's cron is best-effort: runs can start late or be skipped, and
+  scheduled workflows are auto-disabled after ~60 days without repository
+  activity (re-enable from the Actions tab).
+- A FIRMS timeout fails that fetch without changing any data; the workflow
+  retries up to 3 times, and otherwise the next scheduled run catches up
+  (the 7-day window overlaps, and merging is deduplicated).
 
 ---
 

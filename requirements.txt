@@ -3,6 +3,8 @@ scikit-learn==1.9.0
 joblib==1.5.3
 rasterio==1.5.1
 lightgbm==4.7.0
+requests==2.34.2
+python-dotenv==1.2.2
 # lightgbm's compiled binary needs the OpenMP runtime (libomp.dylib) on
 # macOS. No new system package was installed to provide it: scikit-learn's
 # own wheel (already required above) bundles its own libomp.dylib, and
