@@ -5,6 +5,8 @@
 Thermal Sources Using NASA FIRMS, OSM & Satellite Data."
 Theme: Disaster Management · Category: Software · Team: Hacksmiths
 
+**Live demo:** https://notsushmit.github.io/thermoscope-sih26162/frontend/
+
 > **Status: working prototype, inference-only.** Every number and screenshot
 > below is produced by the actual code in this repository — nothing here is
 > a mockup or a projection.
